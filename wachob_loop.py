@@ -19,23 +19,22 @@ from scipy.ndimage.filters import gaussian_filter1d as smooth
 
 
 recording_time = int(sys.argv[1])
+ort = recording_time
 recording_time = recording_time/5
 file_name = str(sys.argv[2])
 current_dir = os.getcwd()
 os.system('mkdir %s/%s' %(current_dir,file_name))
-# recording_time = 3
-sample_rate = 60
-
-
+sample_rate = 300
 # Get the USB device, e.g. 'USB0::0x1AB1::0x0588::DS1ED141904883'
 instruments = visa.get_instruments_list()
 usb = filter(lambda x: 'USB' in x, instruments)
 if len(usb) != 1:
     print 'Bad instrument list', instruments
     sys.exit(-1)
-all_data = [] #all the data gets stored here
 
+all_data = [] #all the data gets stored here
 # collect the data from the tattoo machine
+print 'Collecting data for %s' %(str(recording_time*5)) + ' minutes'
 while recording_time > 0 :
     recording_time = recording_time - 1
     # Grab the raw data from channel 1
@@ -43,7 +42,6 @@ while recording_time > 0 :
     scope.write(":RUN")
     time.sleep(sample_rate)
     scope.write(":STOP")
-    print 'saving data'
     # Get the timescale
     timescale = scope.ask_for_values(":TIM:SCAL?")[0]
 
@@ -57,8 +55,8 @@ while recording_time > 0 :
     # scope.write(":WAV:POIN:MODE RAW")
     rawdata = scope.ask(":WAV:DATA? CHAN1")[10:]
     data_size = len(rawdata)
-    sample_rate = scope.ask_for_values(':ACQ:SAMP?')[0]
-    print 'Data size:', data_size, "Sample rate:", sample_rate
+    # sample_rate = scope.ask_for_values(':ACQ:SAMP?')[0]
+    # print 'Data size:', data_size, "Sample rate:", sample_rate
 
     scope.write(":KEY:FORCE")
     scope.close()
@@ -73,55 +71,46 @@ while recording_time > 0 :
     data = (data - 130.0 - voltoffset/voltscale*25) / 25 * voltscale
     all_data.extend(data[:600])
     np.save('%s/%s_data' %(file_name,file_name), all_data)
-    print 'data saved! collecting more...'
+    print 'Data saved! Collecting more...' + 'You have %s minutes left.' %(str(recording_time*5))
 
-#transform data a bit
-if min(all_data) <0:
-    all_data = all_data + abs(min(all_data))
-all_data = all_data *10
-np.save('%s/%s/%s_data' %(current_dir,file_name,file_name), all_data))
-
+print 'Tattoo done, making the images now...'
 
 # Plot the raw data
 plt.plot(range(len(all_data)), all_data)
 plt.title("Oscilloscope Channel 1")
 plt.ylabel("Voltage (V)")
 plt.xlabel("Time")
-# plt.show()
-methods = [None, 'none', 'nearest', 'bilinear', 'bicubic', 'spline16',
-           'spline36', 'hanning', 'hamming', 'hermite', 'kaiser', 'quadric',
-           'catrom', 'gaussian', 'bessel', 'mitchell', 'sinc', 'lanczos']
-plt.savefig('%s/%s/%s_raw.eps' %(current_dir,file_name,file_name),dpi=1000)
-
+plt.savefig('%s/%s/%s_raw.pdf' %(current_dir,file_name,file_name),dpi=1000)
 
 # Plot fancy data
 all_data = np.array(all_data)
-x = smooth(all_data,sigma = np.std(all_data)*4)
-grid = x.reshape(-1,50)
+noise = np.random.normal(np.mean(all_data),(np.std(all_data)/3),len(all_data))
+all_data = all_data + noise
+x = smooth(all_data,sigma = np.std(all_data)*10)
+grid = x.reshape(ort,-1)
 figure(1)
 imshow(grid, cmap = 'spectral', interpolation='gaussian')
-plt.savefig('%s/%s/%s_fancy.eps' %(current_dir,file_name,file_name),dpi=1000)
-
+plt.savefig('%s/%s/%s_fancy.pdf' %(current_dir,file_name,file_name),dpi=1000)
 
 # Make movie!
 def write_movie(data, fps=5):
     global x
     global current_dir
     global file_name
-    print 'making movie! Might take a bit of time (10-15 minutes). Be patient :)'
+    print 'Making movie! Might take a bit of time (10-15 minutes). Be patient :)'
     name = 0
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
             name = name+1
-            fname = '_tmp%05d.png'% name
+            fname = '_tmp%06d.png'% name
             figure(1)
             image = data.copy()
             image[i+1:] = max(x) + 0.1
             image[i][j:] = max(x) + 0.1
             imshow(image, cmap = 'spectral', interpolation='gaussian')
-            plt.savefig('fname') 
+            plt.savefig(fname) 
             plt.clf()
-    os.system("ffmpeg -r "+str(fps)+" -b %s " %name +  '-i _tmp%05d.png movie.mp4')
+    os.system("ffmpeg -r "+str(fps)+" -b %s " %name +  '-i _tmp%06d.png movie.mp4')
     os.system("rm _tmp*.png")
     os.system('mv movie.mp4 /%s/%s/' %(current_dir,file_name))
 write_movie(grid,40)
